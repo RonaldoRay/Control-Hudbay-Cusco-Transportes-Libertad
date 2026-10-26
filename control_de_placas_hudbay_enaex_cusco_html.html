@@ -1,0 +1,859 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Control mensual de inspección de unidades - Hudbay Enaex Cusco</title>
+    
+    <!-- PWA / Mobile Web App Meta Tags -->
+    <meta name="theme-color" content="#0f172a">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Control Hudbay">
+
+    <script src="https://cdn.tailwindcss.com/3.4.17"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Firebase SDKs (v9 Compat) -->
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
+
+    <script>
+        tailwind.config = { theme: { extend: { fontFamily: { sans: ['Inter', 'sans-serif'] } } } }
+    </script>
+    <style>
+        .table-container { max-height: calc(100vh - 380px); min-height: 300px; }
+        .print-only { display: none !important; }
+        
+        @media print {
+            @page { 
+                size: A4 landscape; 
+                margin: 0.8cm; 
+            }
+            body { 
+                background: white !important; 
+                color: #000 !important;
+                font-size: 11px !important;
+                -webkit-print-color-adjust: exact !important;
+                print-color-adjust: exact !important;
+            }
+            .no-print { display: none !important; }
+            .print-only { display: block !important; }
+            .table-container { 
+                max-height: none !important; 
+                overflow: visible !important; 
+            }
+            table { 
+                width: 100% !important; 
+                border-collapse: collapse !important; 
+                table-layout: auto !important;
+            }
+            th, td { 
+                border: 1px solid #cbd5e1 !important; 
+                padding: 6px 8px !important; 
+                font-size: 10px !important;
+                word-wrap: break-word;
+            }
+            th { 
+                background-color: #0f172a !important; 
+                color: white !important; 
+                font-weight: 700 !important;
+            }
+            tr { page-break-inside: avoid; }
+        }
+    </style>
+</head>
+<body class="bg-slate-100 text-slate-800 min-h-screen flex flex-col font-sans">
+
+    <!-- Encabezado -->
+    <header class="bg-slate-900 text-white shadow-md border-b-4 border-blue-600 sticky top-0 z-30 no-print">
+        <div class="max-w-7xl mx-auto px-4 py-4 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+            <div>
+                <div class="flex items-center gap-2 text-xs text-slate-400">
+                    <span class="font-semibold text-blue-300">Transportes Libertad</span>
+                    <span>Cusco, Perú</span>
+                </div>
+                <h1 class="text-xl sm:text-2xl font-bold tracking-tight">Control mensual de inspección de unidades</h1>
+                <p class="text-sm text-slate-300">Operación Hudbay - Enaex Cusco</p>
+            </div>
+
+            <!-- Selector de mes + iniciar mes nuevo -->
+            <div class="flex flex-wrap items-end gap-3">
+                <div>
+                    <label class="block text-xs text-slate-400 mb-1" for="month-select">Mes en pantalla</label>
+                    <div class="flex gap-2">
+                        <select id="month-select" onchange="changeMonth(this.value)" class="bg-slate-800 border border-slate-600 text-white text-sm rounded-lg px-3 py-2 capitalize"></select>
+                        <button onclick="deleteCurrentMonth()" class="px-2.5 py-2 bg-red-600 hover:bg-red-700 text-white text-sm font-medium rounded-lg" title="Eliminar mes actual">🗑️</button>
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-xs text-slate-400 mb-1" for="new-month-input">Iniciar mes nuevo</label>
+                    <div class="flex gap-2">
+                        <input type="month" id="new-month-input" class="bg-slate-800 border border-slate-600 text-white text-sm rounded-lg px-3 py-2">
+                        <button onclick="startMonthFromInput()" class="px-3 py-2 bg-blue-600 hover:bg-blue-700 text-sm font-medium rounded-lg">Iniciar mes</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Pestañas principales -->
+        <div class="max-w-7xl mx-auto px-4 flex gap-1 text-sm font-medium">
+            <button id="view-month" onclick="setView('month')" class="px-4 py-2 rounded-t-lg">Inspección del mes</button>
+            <button id="view-fleet" onclick="setView('fleet')" class="px-4 py-2 rounded-t-lg">Flota</button>
+            <button id="view-followup" onclick="setView('followup')" class="px-4 py-2 rounded-t-lg">Seguimiento (<span id="followup-count">0</span>)</button>
+        </div>
+    </header>
+
+    <main class="max-w-7xl mx-auto px-4 py-6 flex-grow w-full">
+
+        <!-- ================= VISTA: MES ================= -->
+        <div id="section-month">
+            <!-- KPIs -->
+            <section class="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6 no-print">
+                <div class="bg-white p-4 rounded-xl border border-slate-200">
+                    <p class="text-xs font-semibold text-slate-500">Unidades del mes</p>
+                    <h3 id="kpi-total" class="text-3xl font-extrabold mt-1">0</h3>
+                </div>
+                <div class="bg-white p-4 rounded-xl border border-slate-200">
+                    <p class="text-xs font-semibold text-emerald-600">Revisadas</p>
+                    <h3 id="kpi-inspected" class="text-3xl font-extrabold text-emerald-700 mt-1">0</h3>
+                </div>
+                <div class="bg-white p-4 rounded-xl border border-slate-200">
+                    <p class="text-xs font-semibold text-amber-600">Pendientes</p>
+                    <h3 id="kpi-pending" class="text-3xl font-extrabold text-amber-600 mt-1">0</h3>
+                </div>
+                <div class="bg-white p-4 rounded-xl border border-slate-200">
+                    <p class="text-xs font-semibold text-red-600">Con observación o no operativas</p>
+                    <h3 id="kpi-issues" class="text-3xl font-extrabold text-red-600 mt-1">0</h3>
+                </div>
+                <div class="bg-white p-4 rounded-xl border border-slate-200">
+                    <p class="text-xs font-semibold text-blue-600">Avance del mes</p>
+                    <h3 id="kpi-percentage" class="text-3xl font-extrabold text-blue-700 mt-1">0%</h3>
+                    <div class="w-full bg-slate-100 rounded-full h-2 mt-2 overflow-hidden">
+                        <div id="progress-bar" class="bg-blue-600 h-2 rounded-full transition-all duration-500" style="width:0%"></div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Barra de acciones -->
+            <section class="bg-white p-4 rounded-xl border border-slate-200 mb-6 no-print">
+                <div class="flex flex-col lg:flex-row gap-4 lg:items-center lg:justify-between">
+                    <form onsubmit="handleAddPlate(event)" class="flex gap-2 flex-grow max-w-md">
+                        <input id="new-plate-input" type="text" placeholder="Agregar placa (ej: V1X-892)" required
+                            class="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-300 rounded-lg uppercase font-semibold focus:ring-2 focus:ring-blue-500 focus:outline-none">
+                        <button type="submit" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg shrink-0">Agregar</button>
+                    </form>
+                    <div class="flex flex-wrap gap-2 items-center">
+                        <input id="search-input" type="text" oninput="handleSearch()" placeholder="Buscar placa, técnico u observación..."
+                            class="min-w-[220px] px-3 py-2 text-sm bg-slate-50 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none">
+                        <button onclick="exportMonthCSV()" class="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium rounded-lg">Exportar mes (Excel)</button>
+                        <button onclick="window.print()" class="px-3 py-2 bg-slate-700 hover:bg-slate-800 text-white text-sm font-medium rounded-lg">Imprimir</button>
+                    </div>
+                </div>
+                <div class="flex flex-wrap items-center gap-2 mt-4 pt-3 border-t border-slate-100 text-xs font-medium">
+                    <span class="text-slate-500">Mostrar:</span>
+                    <button id="tab-all" onclick="setFilter('all')">Todas (<span id="count-tab-all">0</span>)</button>
+                    <button id="tab-pending" onclick="setFilter('pending')">Pendientes (<span id="count-tab-pending">0</span>)</button>
+                    <button id="tab-inspected" onclick="setFilter('inspected')">Revisadas (<span id="count-tab-inspected">0</span>)</button>
+                    <button id="tab-issues" onclick="setFilter('issues')">Con observación (<span id="count-tab-issues">0</span>)</button>
+                </div>
+            </section>
+
+            <!-- Encabezado Exclusivo para Impresión -->
+            <div class="print-only pb-4 border-b border-gray-300 mb-4">
+                <div class="flex justify-between items-start">
+                    <div>
+                        <h1 class="text-xl font-bold tracking-tight text-black">REPORTE DE INSPECCIÓN MENSUAL DE UNIDADES</h1>
+                        <p class="text-xs text-slate-600 font-semibold">Transportes Libertad | Operación Hudbay - Enaex Cusco</p>
+                    </div>
+                    <div class="text-right text-xs">
+                        <p id="print-title" class="font-bold text-slate-800"></p>
+                    </div>
+                </div>
+                <!-- Resumen de estado al imprimir -->
+                <div class="flex gap-6 mt-3 text-xs border-t border-slate-200 pt-2">
+                    <span><strong>Total Unidades:</strong> <span id="print-kpi-total">0</span></span>
+                    <span><strong>Revisadas:</strong> <span id="print-kpi-inspected">0</span></span>
+                    <span><strong>Pendientes:</strong> <span id="print-kpi-pending">0</span></span>
+                    <span><strong>Con Observación:</strong> <span id="print-kpi-issues">0</span></span>
+                </div>
+            </div>
+
+            <!-- Tabla del mes -->
+            <section class="bg-white rounded-xl border border-slate-200 overflow-hidden">
+                <div class="overflow-x-auto table-container">
+                    <table class="w-full text-left border-collapse">
+                        <thead>
+                            <tr class="bg-slate-800 text-slate-200 text-xs sticky top-0 z-10">
+                                <th class="py-3 px-3 text-center">Revisado</th>
+                                <th class="py-3 px-3">Placa</th>
+                                <th class="py-3 px-3">Resultado</th>
+                                <th class="py-3 px-3">Fecha y hora</th>
+                                <th class="py-3 px-3">Técnico</th>
+                                <th class="py-3 px-3">Observaciones</th>
+                                <th class="py-3 px-3">Última inspección</th>
+                                <th class="py-3 px-3 text-center no-print">Acciones</th>
+                            </tr>
+                        </thead>
+                        <tbody id="plates-table-body" class="divide-y divide-slate-100 text-sm"></tbody>
+                    </table>
+                </div>
+                <div id="empty-state" class="hidden py-12 text-center">
+                    <h4 class="text-base font-semibold text-slate-700">No hay unidades para mostrar</h4>
+                    <p class="text-xs text-slate-500 mt-1">Cambia el filtro, busca otra placa o agrega una unidad nueva.</p>
+                </div>
+            </section>
+        </div>
+
+        <!-- ================= VISTA: FLOTA ================= -->
+        <div id="section-fleet" class="hidden">
+            <section class="bg-white p-4 rounded-xl border border-slate-200 mb-6">
+                <div class="flex justify-between items-center mb-2">
+                    <div>
+                        <h2 class="font-semibold text-slate-800">Agregar varias placas de una vez</h2>
+                        <p class="text-xs text-slate-500">Pega una placa por línea (o separadas por coma). Las que ya existen no se duplican.</p>
+                    </div>
+                    <button onclick="resetAllData()" class="px-3 py-1.5 bg-red-100 hover:bg-red-200 text-red-700 text-xs font-bold rounded-lg border border-red-300">⚠️ Borrar todo y reiniciar de cero</button>
+                </div>
+                <textarea id="bulk-input" rows="4" placeholder="V1X-892&#10;ABC-123&#10;D4F-567" class="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-300 rounded-lg uppercase font-mono focus:ring-2 focus:ring-blue-500 focus:outline-none"></textarea>
+                <button onclick="handleBulkAdd()" class="mt-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg">Agregar placas</button>
+            </section>
+
+            <section class="bg-white rounded-xl border border-slate-200 overflow-hidden mb-6">
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left text-sm">
+                        <thead>
+                            <tr class="bg-slate-800 text-slate-200 text-xs">
+                                <th class="py-3 px-3">Placa</th>
+                                <th class="py-3 px-3">Estado en la cuenta</th>
+                                <th class="py-3 px-3">Alta</th>
+                                <th class="py-3 px-3">Última inspección</th>
+                                <th class="py-3 px-3 text-center">Meses inspeccionada</th>
+                                <th class="py-3 px-3 text-center">Acciones</th>
+                            </tr>
+                        </thead>
+                        <tbody id="fleet-table-body" class="divide-y divide-slate-100"></tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- Respaldo -->
+            <section class="bg-white p-4 rounded-xl border border-slate-200">
+                <h2 class="font-semibold text-slate-800">Respaldo de datos</h2>
+                <p class="text-xs text-slate-500 mb-3">La aplicación ahora se sincroniza en la nube con Firebase. Aun así, puedes descargar un respaldo local en JSON por seguridad.</p>
+                <div class="flex flex-wrap gap-2">
+                    <button onclick="exportBackup()" class="px-3 py-2 bg-slate-800 hover:bg-slate-900 text-white text-sm font-medium rounded-lg">Descargar respaldo (JSON)</button>
+                    <button onclick="document.getElementById('import-file').click()" class="px-3 py-2 bg-slate-200 hover:bg-slate-300 text-slate-800 text-sm font-medium rounded-lg">Restaurar desde respaldo</button>
+                    <input type="file" id="import-file" accept=".json,application/json" class="hidden" onchange="importBackup(event)">
+                </div>
+                <p id="last-backup" class="text-xs text-slate-500 mt-3"></p>
+            </section>
+        </div>
+
+        <!-- ================= VISTA: SEGUIMIENTO ================= -->
+        <div id="section-followup" class="hidden">
+            <section class="bg-white rounded-xl border border-slate-200 overflow-hidden">
+                <div class="p-4 border-b border-slate-100">
+                    <h2 class="font-semibold text-slate-800">Observaciones por corregir</h2>
+                    <p class="text-xs text-slate-500">Unidades con resultado Observado o No operativo que aún no marcaste como corregidas (de todos los meses).</p>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left text-sm">
+                        <thead>
+                            <tr class="bg-slate-800 text-slate-200 text-xs">
+                                <th class="py-3 px-3">Mes</th>
+                                <th class="py-3 px-3">Placa</th>
+                                <th class="py-3 px-3">Resultado</th>
+                                <th class="py-3 px-3">Observaciones</th>
+                                <th class="py-3 px-3">Técnico</th>
+                                <th class="py-3 px-3 text-center">Acción</th>
+                            </tr>
+                        </thead>
+                        <tbody id="followup-table-body" class="divide-y divide-slate-100"></tbody>
+                    </table>
+                </div>
+                <div id="followup-empty" class="hidden py-10 text-center text-sm text-slate-500">No hay observaciones pendientes de corregir.</div>
+            </section>
+        </div>
+    </main>
+
+    <!-- Ventana de historial por unidad -->
+    <dialog id="history-dialog" class="rounded-xl p-0 w-full max-w-2xl backdrop:bg-slate-900/50">
+        <div class="p-5">
+            <div class="flex justify-between items-center mb-3">
+                <h3 id="history-title" class="text-lg font-bold">Historial</h3>
+                <button onclick="document.getElementById('history-dialog').close()" class="px-3 py-1 text-sm bg-slate-100 hover:bg-slate-200 rounded-lg">Cerrar</button>
+            </div>
+            <div id="history-body" class="text-sm"></div>
+        </div>
+    </dialog>
+
+    <script>
+        // ==========================================
+        // CONFIGURACIÓN DE FIREBASE (Realtime Database)
+        // ==========================================
+        const firebaseConfig = {
+            apiKey: "AIzaSyBHRWNd5hTtdgf8nFodM0xgzImuxBvJT2k",
+            authDomain: "controlmensualunidadescusco.firebaseapp.com",
+            databaseURL: "https://controlmensualunidadescusco-default-rtdb.firebaseio.com",
+            projectId: "controlmensualunidadescusco",
+            storageBucket: "controlmensualunidadescusco.firebasestorage.app",
+            messagingSenderId: "240266723764",
+            appId: "1:240266723764:web:8766cae913d61c0987b2e1",
+            measurementId: "G-D1SV6RFKXC"
+        };
+
+        // Inicializar Firebase
+        firebase.initializeApp(firebaseConfig);
+        const db = firebase.database();
+
+        const OLD_KEY = 'hudbay_enaex_units';
+        const RESULTS = ['Conforme', 'Observado', 'No operativo'];
+
+        let S = { units: [], months: {}, current: '', lastBackup: '' };
+        let view = 'month';
+        let currentFilter = 'all';
+        let searchQuery = '';
+
+        function esc(str) {
+            return String(str ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+        }
+        function newId() { return Date.now() * 1000 + Math.floor(Math.random() * 1000); }
+        function todayISO() {
+            const d = new Date();
+            return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        }
+        function nowTime() {
+            const d = new Date();
+            return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+        }
+        function monthLabel(ym) {
+            if(!ym) return '';
+            const [y, m] = ym.split('-').map(Number);
+            return new Date(y, m - 1, 1).toLocaleDateString('es-PE', { month: 'long', year: 'numeric' });
+        }
+        function normalizePlate(raw) {
+            const clean = String(raw).toUpperCase().replace(/[^A-Z0-9]/g, '');
+            if (!clean) return '';
+            return clean.length === 6 ? `${clean.slice(0, 3)}-${clean.slice(3)}` : clean;
+        }
+        function plateKey(p) { return String(p).toUpperCase().replace(/[^A-Z0-9]/g, ''); }
+        function emptyRecord() {
+            return { inspected: false, date: '', time: '', result: '', tech: '', notes: '', resolved: false };
+        }
+        function isIssue(r) { return r.inspected && (r.result === 'Observado' || r.result === 'No operativo'); }
+        function unitById(id) { return S.units.find(u => u.id === id); }
+
+        // Guardar en la base de datos de Firebase en tiempo real
+        let isSaving = false;
+        function save() {
+            if (isSaving) return;
+            isSaving = true;
+            db.ref('hudbay_state').set(S)
+              .then(() => { isSaving = false; })
+              .catch((e) => {
+                  isSaving = false;
+                  console.error('Error al sincronizar con Firebase:', e);
+              });
+            render();
+        }
+
+        // Cargar datos desde Firebase en tiempo real
+        function load() {
+            db.ref('hudbay_state').on('value', (snapshot) => {
+                const data = snapshot.val();
+                if (data) {
+                    S = Object.assign({ units: [], months: {}, current: '', lastBackup: '' }, data);
+                } else {
+                    // Si está vacío, inicializar por defecto en setiembre 2026
+                    S = { units: [], months: {}, current: '2026-09', lastBackup: '' };
+                    ensureMonth('2026-09');
+                    save();
+                }
+
+                if (!S.current || !S.months[S.current]) {
+                    const keys = Object.keys(S.months).sort();
+                    S.current = keys.length ? keys[keys.length - 1] : '2026-09';
+                }
+                ensureMonth(S.current);
+                render();
+            });
+        }
+
+        function resetAllData() {
+            if (!confirm('⚠️ ¿Estás seguro de BORRAR TODO el sistema en la nube? Se eliminarán todas las placas y meses para empezar desde setiembre.')) {
+                return;
+            }
+            db.ref('hudbay_state').remove();
+            S = { units: [], months: {}, current: '2026-09', lastBackup: '' };
+            ensureMonth('2026-09');
+            save();
+            alert('Sistema reiniciado desde cero en la nube.');
+        }
+
+        function ensureMonth(ym) {
+            if (!S.months[ym]) {
+                S.months[ym] = { records: {} };
+                S.units.filter(u => u.active).forEach(u => { S.months[ym].records[u.id] = emptyRecord(); });
+            }
+        }
+        function startMonthFromInput() {
+            const ym = document.getElementById('new-month-input').value;
+            if (!ym) { alert('Elige el mes que quieres iniciar.'); return; }
+            if (S.months[ym] && !confirm(`${monthLabel(ym)} ya existe. ¿Quieres abrirlo?`)) return;
+            ensureMonth(ym);
+            S.current = ym;
+            save();
+        }
+        function changeMonth(ym) {
+            S.current = ym;
+            save();
+        }
+        
+        function deleteCurrentMonth() {
+            const ym = S.current;
+            if (!ym || !S.months[ym]) return;
+            const label = monthLabel(ym);
+            if (!confirm(`¿Eliminar por completo el mes de "${label}"?`)) return;
+
+            delete S.months[ym];
+            const remainingKeys = Object.keys(S.months).sort();
+            if (remainingKeys.length > 0) {
+                S.current = remainingKeys[remainingKeys.length - 1];
+            } else {
+                S.current = '2026-09';
+                ensureMonth(S.current);
+            }
+            save();
+        }
+
+        function monthRecords() { return S.months[S.current] ? S.months[S.current].records : {}; }
+
+        function addUnit(rawPlate) {
+            const plate = normalizePlate(rawPlate);
+            if (!plate) return null;
+            const found = S.units.find(u => plateKey(u.plate) === plateKey(plate));
+            if (found) {
+                if (!found.active) {
+                    found.active = true; found.inactiveDate = '';
+                    if (!monthRecords()[found.id]) monthRecords()[found.id] = emptyRecord();
+                    return 'reactivada';
+                }
+                if (!monthRecords()[found.id]) { monthRecords()[found.id] = emptyRecord(); return 'nueva'; }
+                return 'existe';
+            }
+            const unit = { id: newId(), plate, active: true, addedDate: todayISO(), inactiveDate: '' };
+            S.units.push(unit);
+            monthRecords()[unit.id] = emptyRecord();
+            return 'nueva';
+        }
+        function handleAddPlate(event) {
+            event.preventDefault();
+            const input = document.getElementById('new-plate-input');
+            const res = addUnit(input.value);
+            if (res === 'existe') alert(`La placa "${normalizePlate(input.value)}" ya está en este mes.`);
+            input.value = '';
+            save();
+        }
+        function handleBulkAdd() {
+            const area = document.getElementById('bulk-input');
+            const list = area.value.split(/[\n,;]+/).map(s => s.trim()).filter(Boolean);
+            if (!list.length) return;
+            let nuevas = 0, reactivadas = 0, repetidas = 0;
+            list.forEach(p => {
+                const r = addUnit(p);
+                if (r === 'nueva') nuevas++; else if (r === 'reactivada') reactivadas++; else repetidas++;
+            });
+            area.value = '';
+            save();
+            alert(`Listo: ${nuevas} nuevas, ${reactivadas} reactivadas, ${repetidas} ya existían.`);
+        }
+        function deactivateUnit(id) {
+            const u = unitById(id);
+            if (!u || !confirm(`¿Dar de baja la placa ${u.plate}?`)) return;
+            u.active = false; u.inactiveDate = todayISO();
+            const rec = monthRecords()[id];
+            if (rec && !rec.inspected) delete monthRecords()[id];
+            save();
+        }
+        function activateUnit(id) {
+            const u = unitById(id);
+            if (!u) return;
+            u.active = true; u.inactiveDate = '';
+            if (!monthRecords()[id]) monthRecords()[id] = emptyRecord();
+            save();
+        }
+
+        function toggleInspection(id) {
+            const r = monthRecords()[id];
+            if (!r) return;
+            r.inspected = !r.inspected;
+            if (r.inspected) {
+                if (!r.date) r.date = todayISO();
+                if (!r.time) r.time = nowTime();
+                if (!r.result) r.result = 'Conforme';
+            }
+            save();
+        }
+        function updateField(id, field, value) {
+            const r = monthRecords()[id];
+            if (!r) return;
+            r[field] = value;
+            if ((field === 'date' || field === 'time') && r.date && r.time) r.inspected = true;
+            if (field === 'result' && value) {
+                r.inspected = true;
+                if (!r.date) r.date = todayISO();
+                if (!r.time) r.time = nowTime();
+                if (value === 'Conforme') r.resolved = false;
+            }
+            save();
+        }
+        function toggleResolved(id, ym) {
+            const r = S.months[ym || S.current].records[id];
+            if (!r) return;
+            r.resolved = !r.resolved;
+            save();
+        }
+
+        function lastInspection(unitId) {
+            let last = '';
+            Object.values(S.months).forEach(m => {
+                const r = m.records[unitId];
+                if (r && r.inspected && r.date && r.date > last) last = r.date;
+            });
+            if (!last) return { date: '', days: null };
+            const days = Math.floor((new Date(todayISO() + 'T00:00') - new Date(last + 'T00:00')) / 86400000);
+            return { date: last, days };
+        }
+        function daysBadge(li) {
+            if (li.days === null) return '<span class="px-2 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-600">Nunca</span>';
+            let cls = 'bg-emerald-100 text-emerald-800';
+            if (li.days > 30) cls = 'bg-red-100 text-red-800';
+            else if (li.days >= 20) cls = 'bg-amber-100 text-amber-800';
+            const txt = li.days === 0 ? 'hoy' : `hace ${li.days} d`;
+            return `<span class="px-2 py-0.5 rounded-full text-xs font-semibold ${cls}">${li.date} (${txt})</span>`;
+        }
+
+        function handleSearch() {
+            searchQuery = document.getElementById('search-input').value.trim().toLowerCase();
+            renderTable();
+        }
+        function setFilter(f) {
+            currentFilter = f;
+            renderTable();
+            updateFilterTabs();
+        }
+        function updateFilterTabs() {
+            ['all', 'pending', 'inspected', 'issues'].forEach(f => {
+                const el = document.getElementById(`tab-${f}`);
+                if(el) {
+                    el.className = f === currentFilter
+                        ? 'px-2.5 py-1 rounded-md bg-slate-800 text-white font-semibold'
+                        : 'px-2.5 py-1 rounded-md bg-slate-100 text-slate-600 hover:bg-slate-200';
+                }
+            });
+        }
+        function setView(v) {
+            view = v;
+            render();
+        }
+
+        function monthRows() {
+            return Object.keys(monthRecords())
+                .map(k => ({ unit: unitById(Number(k)), rec: monthRecords()[k] }))
+                .filter(x => x.unit)
+                .sort((a, b) => a.unit.plate.localeCompare(b.plate));
+        }
+        function filteredRows() {
+            return monthRows().filter(({ unit, rec }) => {
+                if (currentFilter === 'pending' && rec.inspected) return false;
+                if (currentFilter === 'inspected' && !rec.inspected) return false;
+                if (currentFilter === 'issues' && !isIssue(rec)) return false;
+                if (searchQuery) {
+                    const hay = `${unit.plate} ${rec.tech} ${rec.notes} ${rec.date} ${rec.result}`.toLowerCase();
+                    return hay.includes(searchQuery);
+                }
+                return true;
+            });
+        }
+
+        function render() {
+            ['month', 'fleet', 'followup'].forEach(v => {
+                document.getElementById(`section-${v}`).classList.toggle('hidden', v !== view);
+                document.getElementById(`view-${v}`).className = v === view
+                    ? 'px-4 py-2 rounded-t-lg bg-slate-100 text-slate-900'
+                    : 'px-4 py-2 rounded-t-lg text-slate-300 hover:bg-slate-800';
+            });
+            renderMonthSelect();
+            updateKPIs();
+            updateFilterTabs();
+            if (view === 'month') renderTable();
+            if (view === 'fleet') renderFleet();
+            if (view === 'followup') renderFollowup();
+            document.getElementById('followup-count').innerText = pendingFollowups().length;
+        }
+
+        function renderMonthSelect() {
+            const sel = document.getElementById('month-select');
+            const keys = Object.keys(S.months).sort().reverse();
+            sel.innerHTML = keys.map(k => `<option value="${k}" ${k === S.current ? 'selected' : ''}>${monthLabel(k)}</option>`).join('');
+            const input = document.getElementById('new-month-input');
+            if (!input.value && keys.length > 0) {
+                const [y, m] = keys[0].split('-').map(Number);
+                const next = new Date(y, m, 1);
+                input.value = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, '0')}`;
+            } else if (!input.value) {
+                input.value = '2026-09';
+            }
+        }
+
+        function updateKPIs() {
+            const rows = monthRows();
+            const total = rows.length;
+            const inspected = rows.filter(x => x.rec.inspected).length;
+            const issues = rows.filter(x => isIssue(x.rec)).length;
+            const pending = total - inspected;
+            const pct = total ? Math.round((inspected / total) * 100) : 0;
+            
+            document.getElementById('kpi-total').innerText = total;
+            document.getElementById('kpi-inspected').innerText = inspected;
+            document.getElementById('kpi-pending').innerText = pending;
+            document.getElementById('kpi-issues').innerText = issues;
+            document.getElementById('kpi-percentage').innerText = `${pct}%`;
+            document.getElementById('progress-bar').style.width = `${pct}%`;
+            
+            document.getElementById('print-kpi-total').innerText = total;
+            document.getElementById('print-kpi-inspected').innerText = inspected;
+            document.getElementById('print-kpi-pending').innerText = pending;
+            document.getElementById('print-kpi-issues').innerText = issues;
+
+            document.getElementById('count-tab-all').innerText = total;
+            document.getElementById('count-tab-pending').innerText = pending;
+            document.getElementById('count-tab-inspected').innerText = inspected;
+            document.getElementById('count-tab-issues').innerText = issues;
+            document.getElementById('print-title').innerText = `Mes: ${monthLabel(S.current)} | Impr: ${new Date().toLocaleDateString('es-PE')}`;
+        }
+
+        function resultBadge(r) {
+            if (!r.inspected) return '<span class="text-slate-400 italic">Pendiente</span>';
+            const colors = { 
+                'Conforme': 'bg-emerald-100 text-emerald-800 border border-emerald-300', 
+                'Observado': 'bg-amber-100 text-amber-800 border border-amber-300', 
+                'No operativo': 'bg-red-100 text-red-800 border border-red-300' 
+            };
+            return `<span class="px-2 py-0.5 rounded text-xs font-bold ${colors[r.result] || 'bg-slate-100 text-slate-700'}">${esc(r.result || 'Revisado')}</span>`;
+        }
+
+        function renderTable() {
+            const tbody = document.getElementById('plates-table-body');
+            const empty = document.getElementById('empty-state');
+            const rows = filteredRows();
+            const techs = [...new Set(Object.values(S.months).flatMap(m => Object.values(m.records).map(r => r.tech)).filter(Boolean))];
+
+            tbody.innerHTML = '';
+            empty.classList.toggle('hidden', rows.length > 0);
+
+            rows.forEach(({ unit, rec }) => {
+                const li = lastInspection(unit.id);
+                const tr = document.createElement('tr');
+                tr.className = rec.inspected ? 'bg-emerald-50/40 hover:bg-emerald-50' : 'hover:bg-slate-50';
+                tr.innerHTML = `
+                    <td class="py-3 px-3 text-center">
+                        <div class="no-print">
+                            <input type="checkbox" ${rec.inspected ? 'checked' : ''} onchange="toggleInspection(${unit.id})"
+                                class="w-5 h-5 accent-emerald-600 cursor-pointer">
+                        </div>
+                        <div class="print-only text-center font-bold text-base">
+                            ${rec.inspected ? '☑' : '☐'}
+                        </div>
+                    </td>
+                    <td class="py-3 px-3 font-bold font-mono text-base tracking-wide">
+                        ${esc(unit.plate)}
+                        ${!unit.active ? '<span class="ml-1 text-xs font-sans font-semibold text-slate-500">(de baja)</span>' : ''}
+                    </td>
+                    <td class="py-3 px-3">
+                        <div class="no-print flex flex-col gap-1">
+                            <select onchange="updateField(${unit.id}, 'result', this.value)" class="text-xs border border-slate-300 rounded px-2 py-1 bg-white">
+                                <option value="">Pendiente</option>
+                                ${RESULTS.map(o => `<option ${rec.result === o ? 'selected' : ''}>${o}</option>`).join('')}
+                            </select>
+                            ${isIssue(rec) ? `
+                                <label class="flex items-center gap-1 text-xs text-slate-600 cursor-pointer">
+                                    <input type="checkbox" ${rec.resolved ? 'checked' : ''} onchange="toggleResolved(${unit.id})" class="accent-emerald-600">
+                                    Corregido
+                                </label>` : ''}
+                        </div>
+                        <div class="print-only">
+                            ${resultBadge(rec)}
+                            ${isIssue(rec) ? (rec.resolved ? '<span class="text-xs text-emerald-700 ml-1 font-semibold">(Corregido)</span>' : '<span class="text-xs text-red-600 ml-1 font-semibold">(Por corregir)</span>') : ''}
+                        </div>
+                    </td>
+                    <td class="py-3 px-3 text-xs">
+                        <div class="no-print flex flex-col sm:flex-row gap-1">
+                            <input type="date" value="${esc(rec.date)}" onchange="updateField(${unit.id}, 'date', this.value)" class="border border-slate-300 rounded px-2 py-1 text-xs">
+                            <input type="time" value="${esc(rec.time)}" onchange="updateField(${unit.id}, 'time', this.value)" class="border border-slate-300 rounded px-2 py-1 text-xs">
+                        </div>
+                        <div class="print-only font-mono">${rec.date ? `${esc(rec.date)}${esc(rec.time)}` : '-'}</div>
+                    </td>
+                    <td class="py-3 px-3">
+                        <div class="no-print">
+                            <input type="text" list="techs-list" value="${esc(rec.tech)}" placeholder="Técnico"
+                                onchange="updateField(${unit.id}, 'tech', this.value.trim())"
+                                class="w-32 text-xs px-2 py-1.5 bg-transparent border border-transparent hover:border-slate-300 focus:border-blue-500 focus:bg-white rounded focus:outline-none">
+                        </div>
+                        <div class="print-only font-medium text-xs">${esc(rec.tech) || '-'}</div>
+                    </td>
+                    <td class="py-3 px-3">
+                        <div class="no-print">
+                            <input type="text" value="${esc(rec.notes)}" placeholder="Agregar observación..."
+                                onchange="updateField(${unit.id}, 'notes', this.value)"
+                                class="w-full min-w-[180px] text-xs px-2 py-1.5 bg-transparent border border-transparent hover:border-slate-300 focus:border-blue-500 focus:bg-white rounded focus:outline-none">
+                        </div>
+                        <div class="print-only text-xs">${esc(rec.notes) || '-'}</div>
+                    </td>
+                    <td class="py-3 px-3">${daysBadge(li)}</td>
+                    <td class="py-3 px-3 text-center no-print whitespace-nowrap">
+                        <button onclick="showHistory(${unit.id})" class="text-xs text-blue-600 hover:underline mr-2">Historial</button>
+                        ${unit.active ? `<button onclick="deactivateUnit(${unit.id})" class="text-xs text-red-600 hover:underline">Dar de baja</button>` : ''}
+                    </td>`;
+                tbody.appendChild(tr);
+            });
+
+            let dl = document.getElementById('techs-list');
+            if (!dl) { dl = document.createElement('datalist'); dl.id = 'techs-list'; document.body.appendChild(dl); }
+            dl.innerHTML = techs.map(t => `<option value="${esc(t)}">`).join('');
+        }
+
+        function renderFleet() {
+            const tbody = document.getElementById('fleet-table-body');
+            const units = [...S.units].sort((a, b) => (b.active - a.active) || a.plate.localeCompare(b.plate));
+            tbody.innerHTML = units.map(u => {
+                const li = lastInspection(u.id);
+                const meses = Object.values(S.months).filter(m => m.records[u.id] && m.records[u.id].inspected).length;
+                return `<tr class="${u.active ? '' : 'bg-slate-50 text-slate-500'}">
+                    <td class="py-3 px-3 font-bold font-mono">${esc(u.plate)}</td>
+                    <td class="py-3 px-3">${u.active
+                        ? '<span class="px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800">Activa</span>'
+                        : `<span class="px-2 py-0.5 rounded-full text-xs font-semibold bg-slate-200 text-slate-700">De baja (${esc(u.inactiveDate)})</span>`}</td>
+                    <td class="py-3 px-3 text-xs">${esc(u.addedDate)}</td>
+                    <td class="py-3 px-3">${daysBadge(li)}</td>
+                    <td class="py-3 px-3 text-center">${meses}</td>
+                    <td class="py-3 px-3 text-center whitespace-nowrap">
+                        <button onclick="showHistory(${u.id})" class="text-xs text-blue-600 hover:underline mr-2">Historial</button>
+                        ${u.active
+                            ? `<button onclick="deactivateUnit(${u.id})" class="text-xs text-red-600 hover:underline">Dar de baja</button>`
+                            : `<button onclick="activateUnit(${u.id})" class="text-xs text-emerald-700 hover:underline">Reactivar</button>`}
+                    </td>
+                </tr>`;
+            }).join('') || '<tr><td colspan="6" class="py-8 text-center text-slate-500">Todavía no hay unidades. Agrega las primeras arriba.</td></tr>';
+
+            const lb = document.getElementById('last-backup');
+            if(lb) lb.innerText = S.lastBackup ? `Último respaldo descargado: ${S.lastBackup}` : 'Todavía no has descargado ningún respaldo.';
+        }
+
+        function pendingFollowups() {
+            const out = [];
+            Object.keys(S.months).sort().reverse().forEach(ym => {
+                Object.keys(S.months[ym].records).forEach(k => {
+                    const r = S.months[ym].records[k];
+                    if (isIssue(r) && !r.resolved) out.push({ ym, id: Number(k), rec: r });
+                });
+            });
+            return out;
+        }
+        function renderFollowup() {
+            const list = pendingFollowups();
+            const tbody = document.getElementById('followup-table-body');
+            document.getElementById('followup-empty').classList.toggle('hidden', list.length > 0);
+            tbody.innerHTML = list.map(({ ym, id, rec }) => {
+                const u = unitById(id);
+                return `<tr>
+                    <td class="py-3 px-3 capitalize">${monthLabel(ym)}</td>
+                    <td class="py-3 px-3 font-bold font-mono">${u ? esc(u.plate) : '?'}</td>
+                    <td class="py-3 px-3">${resultBadge(rec)}</td>
+                    <td class="py-3 px-3 text-xs">${esc(rec.notes) || '<span class="text-slate-400">Sin observación escrita</span>'}</td>
+                    <td class="py-3 px-3 text-xs">${esc(rec.tech)}</td>
+                    <td class="py-3 px-3 text-center">
+                        <button onclick="toggleResolved(${id}, '${ym}')" class="px-3 py-1 text-xs bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg">Marcar corregido</button>
+                    </td>
+                </tr>`;
+            }).join('');
+        }
+
+        function showHistory(id) {
+            const u = unitById(id);
+            if (!u) return;
+            document.getElementById('history-title').innerText = `Historial de ${u.plate}`;
+            const rows = Object.keys(S.months).sort().reverse()
+                .filter(ym => S.months[ym].records[id])
+                .map(ym => {
+                    const r = S.months[ym].records[id];
+                    return `<tr class="border-b border-slate-100">
+                        <td class="py-2 pr-3 capitalize">${monthLabel(ym)}</td>
+                        <td class="py-2 pr-3">${r.inspected ? resultBadge(r) : '<span class="text-amber-700 text-xs font-semibold">Pendiente</span>'}</td>
+                        <td class="py-2 pr-3 text-xs font-mono">${r.date ? esc(r.date) + ' ' + esc(r.time) : '-'}</td>
+                        <td class="py-2 pr-3 text-xs">${esc(r.tech) || '-'}</td>
+                        <td class="py-2 text-xs">${esc(r.notes) || '-'}${isIssue(r) ? (r.resolved ? ' (corregido)' : ' (por corregir)') : ''}</td>
+                    </tr>`;
+                }).join('');
+            document.getElementById('history-body').innerHTML = rows
+                ? `<div class="overflow-x-auto"><table class="w-full text-left"><thead><tr class="text-xs text-slate-500"><th class="pb-2">Mes</th><th class="pb-2">Resultado</th><th class="pb-2">Fecha</th><th class="pb-2">Técnico</th><th class="pb-2">Observaciones</th></tr></thead><tbody>${rows}</tbody></table></div>`
+                : '<p class="text-slate-500">Esta unidad todavía no aparece en ningún mes.</p>';
+            document.getElementById('history-dialog').showModal();
+        }
+
+        function downloadFile(content, filename, type) {
+            const blob = new Blob([content], { type });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url; a.download = filename;
+            document.body.appendChild(a); a.click(); document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }
+        function exportMonthCSV() {
+            const rows = monthRows();
+            if (!rows.length) { alert('No hay unidades en este mes para exportar.'); return; }
+            const q = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
+            let csv = '\uFEFF' + 'N,Placa,Estado,Resultado,Fecha,Hora,Tecnico,Observaciones,Corregido\n';
+            rows.forEach(({ unit, rec }, i) => {
+                csv += [i + 1, q(unit.plate), rec.inspected ? 'REVISADO' : 'PENDIENTE', q(rec.result), q(rec.date),
+                    q(rec.time), q(rec.tech), q(rec.notes), isIssue(rec) ? (rec.resolved ? 'SI' : 'NO') : ''].join(',') + '\n';
+            });
+            downloadFile(csv, `Inspeccion_Hudbay_Enaex_${S.current}.csv`, 'text/csv;charset=utf-8;');
+        }
+        function exportBackup() {
+            S.lastBackup = new Date().toLocaleString('es-PE');
+            downloadFile(JSON.stringify(S, null, 2), `Respaldo_Inspeccion_Unidades_${todayISO()}.json`, 'application/json');
+            render();
+        }
+        function importBackup(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = () => {
+                try {
+                    const data = JSON.parse(reader.result);
+                    if (!Array.isArray(data.units) || typeof data.months !== 'object') throw new Error('Formato inválido');
+                    if (!confirm('Esto reemplaza TODOS los datos actuales con los del respaldo. ¿Continuar?')) return;
+                    S = Object.assign({ units: [], months: {}, current: '', lastBackup: '' }, data);
+                    const keys = Object.keys(S.months).sort();
+                    if (!S.current || !S.months[S.current]) S.current = keys.length ? keys[keys.length - 1] : '2026-09';
+                    ensureMonth(S.current);
+                    save();
+                    alert('Respaldo restaurado.');
+                } catch (e) {
+                    alert('Ese archivo no parece un respaldo válido de esta página.');
+                }
+            };
+            reader.readAsText(file);
+            event.target.value = '';
+        }
+
+        window.addEventListener('DOMContentLoaded', () => {
+            load(); // Carga de Firebase en tiempo real
+        });
+    </script>
+</body>
+</html>
